@@ -1,4 +1,10 @@
 {
   "framework": null,
-  "buildCommand": ""
+  "buildCommand": "",
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://blg482--vietnews-summarizer-web.us-east.modal.run/api/:path*"
+    }
+  ]
 }
