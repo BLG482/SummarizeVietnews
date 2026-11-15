@@ -1,9 +1,6 @@
 backend/
 data/
-deploy_modal.py
-deploy_hf.py
-export_slim_checkpoint.py
-run.py
+*.py
 *.bat
 Dockerfile
 docker-compose.yml
