@@ -59,24 +59,36 @@ def web():
     import os
     import shutil
     import sys
+    import threading
+    from sqlalchemy import event
 
     os.makedirs("/data_vol", exist_ok=True)
-    if not os.path.exists("/data_vol/test.csv") and os.path.exists("/app/data/test.csv"):
-        shutil.copyfile("/app/data/test.csv", "/data_vol/test.csv")
+    if os.path.exists("/data_vol/app.db") and not os.path.exists("/tmp/app.db"):
+        try:
+            shutil.copyfile("/data_vol/app.db", "/tmp/app.db")
+        except Exception:
+            pass
 
     os.environ["SEQ2SEQ_RUN_DIR"] = "/models/seq2seq"
     os.environ["VIT5_CHECKPOINT_DIR"] = "/models/vit5"
-    os.environ["DATABASE_URL"] = "sqlite:////data_vol/app.db"
-    os.environ["TESTSET_CSV"] = "/data_vol/test.csv"
+    os.environ["DATABASE_URL"] = "sqlite:////tmp/app.db"
+    os.environ["TESTSET_CSV"] = "/app/data/test.csv"
     os.environ["HF_HOME"] = "/tmp/hf_cache"
 
     sys.path.insert(0, "/app/backend")
-    from app.db import Base, engine
+    from app.db import Base, SessionLocal, engine
     from app.main import _preload, app as fastapi_app
-    import threading
 
     Base.metadata.create_all(engine)
+
+    @event.listens_for(SessionLocal, "after_commit")
+    def _backup_db(_session):
+        try:
+            shutil.copyfile("/tmp/app.db", "/data_vol/app.db")
+            volume.commit()
+        except Exception:
+            pass
+
     threading.Thread(target=_preload, daemon=True).start()
 
     return fastapi_app
-
