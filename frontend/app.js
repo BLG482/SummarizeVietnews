@@ -36,7 +36,9 @@
     return node;
   }
 
-  const API_BASE = '/api';
+  const API_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname.endsWith('.modal.run'))
+    ? '/api'
+    : 'https://blg482--vietnews-summarizer-web.us-east.modal.run/api';
 
   async function api(path, options = {}) {
     const response = await fetch(API_BASE + path, {
