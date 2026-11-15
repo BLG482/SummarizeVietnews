@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, selectinload
@@ -38,6 +39,13 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Đối chiếu tóm tắt: Seq2Seq và ViT5", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+Base.metadata.create_all(engine)
 
 
 # ---------- chuyển đối tượng DB thành JSON ----------

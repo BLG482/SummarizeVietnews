@@ -1,8 +1,8 @@
 {
   "rewrites": [
     {
-      "source": "/api/:path*",
-      "destination": "https://blg482--vietnews-summarizer-web.us-east.modal.run/api/:path*"
+      "source": "/api/(.*)",
+      "destination": "https://blg482--vietnews-summarizer-web.us-east.modal.run/api/$1"
     },
     {
       "source": "/",
@@ -15,10 +15,6 @@
     {
       "source": "/app.js",
       "destination": "/frontend/app.js"
-    },
-    {
-      "source": "/:path*",
-      "destination": "https://blg482--vietnews-summarizer-web.us-east.modal.run/:path*"
     }
   ]
 }
