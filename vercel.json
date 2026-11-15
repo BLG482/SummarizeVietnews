@@ -1,5 +1,5 @@
 {
   "framework": null,
-  "buildCommand": "",
+  "buildCommand": "echo ok",
   "outputDirectory": "frontend"
 }
