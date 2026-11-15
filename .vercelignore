@@ -1,4 +1,3 @@
-backend/
 data/
 deploy_modal.py
 deploy_hf.py
