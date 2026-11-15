@@ -66,13 +66,17 @@ class Vote(Base):
 
 
 def _make_engine():
-    url = settings.database_url
+    import os
+    url = "sqlite:////tmp/app.db" if os.environ.get("VERCEL") else settings.database_url
     kwargs = {}
     if url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
         path = url.replace("sqlite:///", "", 1)
         if path and path != ":memory:":
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            try:
+                Path(path).parent.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                url = "sqlite:////tmp/app.db"
     return create_engine(url, pool_pre_ping=True, **kwargs)
 
 
