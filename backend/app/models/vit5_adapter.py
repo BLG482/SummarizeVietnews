@@ -47,11 +47,6 @@ class ViT5Summarizer(Summarizer):
             name = "cuda" if torch.cuda.is_available() else "cpu"
         self._torch = torch
         self.device = name
-        print(f"[ViT5] 1/3 Đang nạp tokenizer từ {settings.vit5_dir}...", flush=True)
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            settings.vit5_dir, use_fast=False, local_files_only=True
-        )
-        self.tokenizer.truncation_side = "right"
         import gc
         import json
         import struct
@@ -59,11 +54,25 @@ class ViT5Summarizer(Summarizer):
         from transformers import AutoConfig
         from transformers.modeling_utils import no_init_weights
 
-        safetensors_path = Path(settings.vit5_dir) / "model.safetensors"
+        vit5_dir = settings.vit5_dir
+        if not Path(vit5_dir).exists() and "/" in vit5_dir:
+            import tempfile
+            from huggingface_hub import snapshot_download
+            target_dir = Path(tempfile.gettempdir()) / "hf_vit5_model"
+            print(f"[ViT5] Đang tải checkpoint từ Hugging Face Hub ({vit5_dir})...", flush=True)
+            vit5_dir = snapshot_download(repo_id=vit5_dir, local_dir=str(target_dir))
+
+        print(f"[ViT5] 1/3 Đang nạp tokenizer từ {vit5_dir}...", flush=True)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            vit5_dir, use_fast=False, local_files_only=True
+        )
+        self.tokenizer.truncation_side = "right"
+
+        safetensors_path = Path(vit5_dir) / "model.safetensors"
         target_dtype = torch.float32
         if safetensors_path.is_file():
             print("[ViT5] 2/3 Đang khởi tạo khung ViT5...", flush=True)
-            cfg = AutoConfig.from_pretrained(settings.vit5_dir, local_files_only=True)
+            cfg = AutoConfig.from_pretrained(vit5_dir, local_files_only=True)
             cfg._attn_implementation = "eager"
             cfg.use_cache = True
             with no_init_weights():

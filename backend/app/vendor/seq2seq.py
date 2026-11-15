@@ -484,8 +484,8 @@ def load_model(run, device):
     import io
     import zipfile
     run = Path(run)
-    ckpt_file = run / 'best.pt'
-    print(f'[Seq2Seq] Đang đọc {ckpt_file} (chế độ tiết kiệm RAM, bỏ qua optimizer 1.8GB)...', flush=True)
+    ckpt_file = run / 'best_infer.pt' if (run / 'best_infer.pt').is_file() else (run / 'best.pt')
+    print(f'[Seq2Seq] Đang đọc {ckpt_file} (chế độ tiết kiệm RAM, bỏ qua optimizer)...', flush=True)
     with zipfile.ZipFile(ckpt_file, 'r') as zf:
         names = zf.namelist()
         pkl_entry = next(n for n in names if n.endswith('/data.pkl') or n == 'data.pkl')
