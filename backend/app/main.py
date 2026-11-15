@@ -248,5 +248,35 @@ def get_sample(sample_id: int):
 
 
 # Giao diện tĩnh phục vụ cùng một cổng, đặt cuối để không che các đường /api.
-if settings.frontend_dir.exists():
-    app.mount("/", StaticFiles(directory=settings.frontend_dir, html=True), name="ui")
+from pathlib import Path as _Path
+from fastapi.responses import HTMLResponse as _HTMLResponse
+
+_UI_DIR = _Path(__file__).resolve().parents[1] / "frontend"
+if not _UI_DIR.exists():
+    _UI_DIR = settings.frontend_dir
+
+
+@app.get("/")
+@app.get("/index.html")
+def _serve_index():
+    return _HTMLResponse((_UI_DIR / "index.html").read_text(encoding="utf-8"))
+
+
+@app.get("/styles.css")
+def _serve_styles():
+    return Response(
+        (_UI_DIR / "styles.css").read_text(encoding="utf-8"),
+        media_type="text/css; charset=utf-8",
+    )
+
+
+@app.get("/app.js")
+def _serve_js():
+    return Response(
+        (_UI_DIR / "app.js").read_text(encoding="utf-8"),
+        media_type="application/javascript; charset=utf-8",
+    )
+
+
+if _UI_DIR.exists():
+    app.mount("/", StaticFiles(directory=_UI_DIR, html=True), name="ui")
