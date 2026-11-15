@@ -37,6 +37,9 @@ if os.environ.get("VERCEL"):
             (_FRONTEND / "app.js").read_text(encoding="utf-8"),
             media_type="application/javascript; charset=utf-8",
         )
+
+    if _FRONTEND.exists():
+        app.mount("/", StaticFiles(directory=_FRONTEND, html=True), name="ui")
 else:
     from sqlalchemy import case, func, select
     from sqlalchemy.orm import Session, selectinload
