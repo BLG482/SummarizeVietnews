@@ -1,0 +1,9 @@
+backend/
+data/
+*.py
+*.bat
+Dockerfile
+docker-compose.yml
+.venv/
+.env
+.env.example
