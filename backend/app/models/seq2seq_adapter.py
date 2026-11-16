@@ -1,7 +1,7 @@
 """Adapter Seq2Seq (BiGRU + Luong attention). Dùng nguyên mã seq2seq.py đã huấn luyện
 (app/vendor/seq2seq.py) và gọi giống cell demo trong notebook."""
 from ..config import settings
-from .base import Summarizer, Summary, finalize_three_points, split_article_sections
+from .base import Summarizer, Summary, finalize_three_points, semantic_chunk_article
 
 
 class Seq2SeqSummarizer(Summarizer):
@@ -46,20 +46,21 @@ class Seq2SeqSummarizer(Summarizer):
         total_tokens = len(full_ids) + 1
         truncated = len(full_ids) > self.model.cfg.max_source - 1
 
-        sections = split_article_sections(article, target_points=3)
+        sections = semantic_chunk_article(title, article, target_points=3)
         beam = max(2, settings.seq2seq_beam // 2) if len(sections) > 1 else settings.seq2seq_beam
-        print(f"[Seq2Seq] Đang sinh tóm tắt {len(sections)} ý (beam={beam})...", flush=True)
+        print(f"[Seq2Seq] Đang sinh tóm tắt {len(sections)} ý bằng Semantic Chunking (beam={beam})...", flush=True)
 
         raw_outputs: list[str] = []
         with torch.no_grad():
-            for idx, sec in enumerate(sections):
-                sec_title = title.strip() if idx == 0 else ""
-                src = f"Tiêu đề: {sec_title} Nội dung: {sec.strip()}"
+            for sec in sections:
+                src = f"Tiêu đề: {title.strip()} Nội dung: {sec.strip()}"
                 out = self._s2s.generate(
                     self.model, self.tokenizer, src, beam_size=beam, max_new=76
                 )
                 raw_outputs.append(out["summary"])
 
-        summary_text = finalize_three_points(raw_outputs, sections)
+        summary_text = finalize_three_points(
+            raw_outputs, sections, title=title, full_article=article
+        )
         print(f"[Seq2Seq] Xong trong {time.perf_counter() - t0:.2f}s.", flush=True)
         return Summary(text=summary_text, truncated=truncated, input_tokens=total_tokens)

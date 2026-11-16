@@ -2,7 +2,7 @@
 import re
 
 from ..config import settings
-from .base import Summarizer, Summary, finalize_three_points, split_article_sections
+from .base import Summarizer, Summary, finalize_three_points, semantic_chunk_article
 
 
 def word_segment(text: str) -> str:
@@ -136,14 +136,13 @@ class ViT5Summarizer(Summarizer):
         limit = settings.vit5_max_input
         full_length = len(self.tokenizer(full_text, truncation=False)["input_ids"])
 
-        sections = split_article_sections(article, target_points=3)
+        sections = semantic_chunk_article(title, article, target_points=3)
         beam = max(2, settings.vit5_beam // 2) if len(sections) > 1 else settings.vit5_beam
-        print(f"[ViT5] Đang sinh tóm tắt {len(sections)} ý (beam={beam})...", flush=True)
+        print(f"[ViT5] Đang sinh tóm tắt {len(sections)} ý bằng Semantic Chunking (beam={beam})...", flush=True)
 
         inputs: list[str] = []
-        for idx, sec in enumerate(sections):
-            sec_title = title.strip() if idx == 0 else ""
-            sec_text = settings.vit5_input_template.format(title=sec_title, article=sec.strip())
+        for sec in sections:
+            sec_text = settings.vit5_input_template.format(title=title.strip(), article=sec.strip())
             if not raw:
                 sec_text = word_segment(sec_text)
             inputs.append(sec_text)
@@ -166,6 +165,8 @@ class ViT5Summarizer(Summarizer):
             clean_output(self.tokenizer.decode(out, skip_special_tokens=True).strip())
             for out in outputs
         ]
-        summary_text = finalize_three_points(raw_outputs, sections)
+        summary_text = finalize_three_points(
+            raw_outputs, sections, title=title, full_article=article
+        )
         print(f"[ViT5] Xong trong {time.perf_counter() - t0:.2f}s.", flush=True)
         return Summary(text=summary_text, truncated=full_length > limit, input_tokens=full_length)
