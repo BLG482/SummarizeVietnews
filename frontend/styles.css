@@ -38,7 +38,8 @@ details textarea { margin-top: 8px; }
 .actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 24px; }
 .check { display: flex; align-items: center; gap: 8px; font-weight: 400; margin: 0; }
 button { font: inherit; cursor: pointer; border-radius: 4px; padding: 9px 16px; }
-button:disabled { opacity: .55; cursor: progress; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+.primary:disabled { cursor: progress; }
 .primary { background: var(--ink); color: #fff; border: 1px solid var(--ink); font-weight: 500; }
 .ghost { background: var(--surface); color: var(--ink); border: 1px solid var(--rule); }
 .ghost:hover { border-color: var(--ink); } .ghost.on { background: var(--ink); color: #fff; border-color: var(--ink); }
