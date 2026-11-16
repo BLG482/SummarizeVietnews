@@ -90,16 +90,37 @@
   const WORD = /[\p{L}\p{N}]+/gu;
   const tokens = (text) => text.normalize('NFC').toLowerCase().replace(/_/g, ' ').match(WORD) || [];
 
-  function summaryNode(summary, source) {
-    const known = new Set(tokens(source));
-    const p = el('p', { class: 'summary' });
-    for (const part of summary.split(/(\s+)/)) {
+  function summaryPoints(summary) {
+    const lines = (summary || '').split(/\n+/).map((s) => s.trim()).filter(Boolean);
+    if (lines.length > 1) return lines;
+    const sents = (summary || '').split(/(?<=[.!?…])\s+/).map((s) => s.trim()).filter(Boolean);
+    return sents.length > 1 ? sents : lines;
+  }
+
+  function renderTokensInto(host, text, known) {
+    for (const part of text.split(/(\s+)/)) {
       if (!part) continue;
       const ts = tokens(part);
-      if (ts.length && !ts.some((t) => known.has(t))) p.append(el('span', { class: 'novel', text: part }));
-      else p.append(document.createTextNode(part));
+      if (ts.length && !ts.some((t) => known.has(t))) host.append(el('span', { class: 'novel', text: part }));
+      else host.append(document.createTextNode(part));
     }
-    return p;
+  }
+
+  function summaryNode(summary, source) {
+    const known = new Set(tokens(source));
+    const pts = summaryPoints(summary);
+    if (pts.length <= 1) {
+      const p = el('p', { class: 'summary' });
+      renderTokensInto(p, summary, known);
+      return p;
+    }
+    const ul = el('ul', { class: 'summary summary-list' });
+    for (const pt of pts) {
+      const li = el('li');
+      renderTokensInto(li, pt, known);
+      ul.append(li);
+    }
+    return ul;
   }
 
   function sizeComparisonBar(r, sub) {
@@ -109,6 +130,7 @@
     const srcChars = srcText.length;
     const sumWords = words(sumText);
     const sumChars = sumText.length;
+    const nPoints = summaryPoints(sumText).length;
     const ratio = srcWords > 0 ? Math.round((sumWords / srcWords) * 100) : 0;
     return el('div', { class: 'size-compare' },
       el('div', { class: 'size-box' },
@@ -118,7 +140,7 @@
       el('span', { class: 'size-arrow', text: '→' }),
       el('div', { class: 'size-box' },
         el('span', { class: 'size-label', text: 'Kích thước bản tóm tắt' }),
-        el('strong', { text: `${sumWords.toLocaleString('vi-VN')} từ` }),
+        el('strong', { text: `${nPoints} ý · ${sumWords.toLocaleString('vi-VN')} từ` }),
         el('small', { text: ` (${sumChars.toLocaleString('vi-VN')} ký tự · bằng ${ratio}% bản gốc)` })));
   }
 
@@ -127,10 +149,11 @@
     const sumText = (r.summary || '').trim();
     const srcWords = sub.n_words || words(srcText);
     const sumWords = words(sumText);
+    const nPoints = summaryPoints(sumText).length;
     const tokenText = r.input_tokens != null ? `${r.input_tokens.toLocaleString('vi-VN')} / 1.024 token` : 'tối đa 1.024 token';
     const rows = [
       ['Văn bản nguồn', `${srcWords.toLocaleString('vi-VN')} từ (${srcText.length.toLocaleString('vi-VN')} ký tự)`],
-      ['Bản tóm tắt', `${sumWords.toLocaleString('vi-VN')} từ (${sumText.length.toLocaleString('vi-VN')} ký tự)`],
+      ['Bản tóm tắt', `${nPoints} ý (${sumWords.toLocaleString('vi-VN')} từ · ${sumText.length.toLocaleString('vi-VN')} ký tự)`],
       ['Thời gian xử lý', secs(r.latency_ms)],
       ['Token đầu vào', `${tokenText} (${r.truncated ? 'bị cắt bớt' : 'đủ toàn văn'})`],
     ];

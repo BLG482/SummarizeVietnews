@@ -2,7 +2,7 @@
 import re
 
 from ..config import settings
-from .base import Summarizer, Summary
+from .base import Summarizer, Summary, finalize_three_points, split_article_sections
 
 
 def word_segment(text: str) -> str:
@@ -126,23 +126,46 @@ class ViT5Summarizer(Summarizer):
         self.generation_config.use_cache = True
 
     def _summarize(self, title: str, article: str, *, raw: bool) -> Summary:
+        import copy
         import time
+
         t0 = time.perf_counter()
-        print(f"[ViT5] Đang sinh tóm tắt (beam={settings.vit5_beam})...", flush=True)
-        text = settings.vit5_input_template.format(title=title.strip(), article=article.strip())
+        full_text = settings.vit5_input_template.format(title=title.strip(), article=article.strip())
         if not raw:
-            text = word_segment(text)
+            full_text = word_segment(full_text)
         limit = settings.vit5_max_input
-        full_length = len(self.tokenizer(text, truncation=False)["input_ids"])
-        batch = self.tokenizer(text, max_length=limit, truncation=True,
-                               return_tensors="pt").to(self.device)
+        full_length = len(self.tokenizer(full_text, truncation=False)["input_ids"])
+
+        sections = split_article_sections(article, target_points=3)
+        beam = max(2, settings.vit5_beam // 2) if len(sections) > 1 else settings.vit5_beam
+        print(f"[ViT5] Đang sinh tóm tắt {len(sections)} ý (beam={beam})...", flush=True)
+
+        inputs: list[str] = []
+        for idx, sec in enumerate(sections):
+            sec_title = title.strip() if idx == 0 else ""
+            sec_text = settings.vit5_input_template.format(title=sec_title, article=sec.strip())
+            if not raw:
+                sec_text = word_segment(sec_text)
+            inputs.append(sec_text)
+
+        batch = self.tokenizer(
+            inputs, max_length=limit, padding=True, truncation=True, return_tensors="pt"
+        ).to(self.device)
+        gen_cfg = copy.copy(self.generation_config)
+        gen_cfg.num_beams = beam
+        gen_cfg.max_new_tokens = min(96, settings.vit5_max_new)
+
         with self._torch.inference_mode():
-            output = self.model.generate(
+            outputs = self.model.generate(
                 **batch,
-                generation_config=self.generation_config,
+                generation_config=gen_cfg,
                 use_cache=True,
             )
-        decoded = self.tokenizer.decode(output[0], skip_special_tokens=True).strip()
+
+        raw_outputs = [
+            clean_output(self.tokenizer.decode(out, skip_special_tokens=True).strip())
+            for out in outputs
+        ]
+        summary_text = finalize_three_points(raw_outputs, sections)
         print(f"[ViT5] Xong trong {time.perf_counter() - t0:.2f}s.", flush=True)
-        return Summary(text=clean_output(decoded), truncated=full_length > limit,
-                       input_tokens=full_length)
+        return Summary(text=summary_text, truncated=full_length > limit, input_tokens=full_length)
