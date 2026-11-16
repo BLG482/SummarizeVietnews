@@ -102,9 +102,38 @@
     return p;
   }
 
-  function facts(r) {
-    const rows = [['Thời gian', secs(r.latency_ms)], ['Độ dài', words(r.summary) + ' từ'],
-      ['Đầu vào', r.truncated ? 'bị cắt' : 'đủ']];
+  function sizeComparisonBar(r, sub) {
+    const srcText = (sub.article || '').trim();
+    const sumText = (r.summary || '').trim();
+    const srcWords = sub.n_words || words(srcText);
+    const srcChars = srcText.length;
+    const sumWords = words(sumText);
+    const sumChars = sumText.length;
+    const ratio = srcWords > 0 ? Math.round((sumWords / srcWords) * 100) : 0;
+    return el('div', { class: 'size-compare' },
+      el('div', { class: 'size-box' },
+        el('span', { class: 'size-label', text: 'Kích thước văn bản nguồn' }),
+        el('strong', { text: `${srcWords.toLocaleString('vi-VN')} từ` }),
+        el('small', { text: ` (${srcChars.toLocaleString('vi-VN')} ký tự)` })),
+      el('span', { class: 'size-arrow', text: '→' }),
+      el('div', { class: 'size-box' },
+        el('span', { class: 'size-label', text: 'Kích thước bản tóm tắt' }),
+        el('strong', { text: `${sumWords.toLocaleString('vi-VN')} từ` }),
+        el('small', { text: ` (${sumChars.toLocaleString('vi-VN')} ký tự · bằng ${ratio}% bản gốc)` })));
+  }
+
+  function facts(r, sub) {
+    const srcText = (sub.article || '').trim();
+    const sumText = (r.summary || '').trim();
+    const srcWords = sub.n_words || words(srcText);
+    const sumWords = words(sumText);
+    const tokenText = r.input_tokens != null ? `${r.input_tokens.toLocaleString('vi-VN')} / 1.024 token` : 'tối đa 1.024 token';
+    const rows = [
+      ['Văn bản nguồn', `${srcWords.toLocaleString('vi-VN')} từ (${srcText.length.toLocaleString('vi-VN')} ký tự)`],
+      ['Bản tóm tắt', `${sumWords.toLocaleString('vi-VN')} từ (${sumText.length.toLocaleString('vi-VN')} ký tự)`],
+      ['Thời gian xử lý', secs(r.latency_ms)],
+      ['Token đầu vào', `${tokenText} (${r.truncated ? 'bị cắt bớt' : 'đủ toàn văn'})`],
+    ];
     if (r.rougeL != null) rows.push(['ROUGE-1', nf(r.rouge1)], ['ROUGE-2', nf(r.rouge2)], ['ROUGE-L', nf(r.rougeL)]);
     return el('dl', { class: 'facts' }, rows.map(([k, v]) => el('div', {}, el('dt', { text: k }), el('dd', { text: v }))));
   }
@@ -118,11 +147,12 @@
       card.append(el('p', { class: 'error', text: 'Không tóm tắt được. ' + r.error }));
       return card;
     }
+    card.append(sizeComparisonBar(r, sub));
     card.append(summaryNode(r.summary, sub.title + ' ' + sub.article));
     if (r.unsupported_numbers && r.unsupported_numbers.length) {
       card.append(el('p', { class: 'warn', text: 'Số không có trong bài gốc: ' + r.unsupported_numbers.join(', ') }));
     }
-    if (!hiddenLabel) card.append(facts(r)); // thời gian và việc bị cắt sẽ lộ tên mô hình nên ẩn khi chấm mù
+    if (!hiddenLabel) card.append(facts(r, sub)); // thời gian và việc bị cắt sẽ lộ tên mô hình nên ẩn khi chấm mù
     return card;
   }
 
@@ -165,14 +195,31 @@
   // ---------- trang So sánh ----------
   function viewCompare() {
     const f = state.form;
-    const title = el('input', { id: 'title', type: 'text', value: f.title, autocomplete: 'off',
-      placeholder: 'Tiêu đề bài báo (không bắt buộc)' });
-    const article = el('textarea', { id: 'article', rows: '10', placeholder: 'Dán nội dung bài báo vào đây' });
-    const reference = el('textarea', { id: 'reference', rows: '3', placeholder: 'Dán bản tóm tắt chuẩn để chấm ROUGE' });
+    const title = el('input', { id: 'title', type: 'text', value: f.title, autocomplete: 'off', maxlength: '1000',
+      placeholder: 'Tiêu đề bài báo (không bắt buộc, tối đa 1.000 ký tự)' });
+    const article = el('textarea', { id: 'article', rows: '10', maxlength: '60000',
+      placeholder: 'Dán nội dung bài báo vào đây (tối thiểu 30 ký tự, tối đa 60.000 ký tự)' });
+    const reference = el('textarea', { id: 'reference', rows: '3', maxlength: '5000',
+      placeholder: 'Dán bản tóm tắt chuẩn để chấm ROUGE (tối đa 5.000 ký tự)' });
     article.value = f.article;
     reference.value = f.reference;
     const count = el('span', { class: 'muted' });
-    const updateCount = () => { count.textContent = words(article.value) + ' từ'; };
+    const limitHint = el('p', { class: 'limit-hint' });
+    const updateCount = () => {
+      const nWords = words(article.value);
+      const nChars = article.value.trim().length;
+      count.textContent = `(${nWords.toLocaleString('vi-VN')} từ · ${nChars.toLocaleString('vi-VN')} / 60.000 ký tự)`;
+      if (nChars > 0 && nChars < 30) {
+        limitHint.className = 'limit-hint limit-warn';
+        limitHint.textContent = `Cần nhập tối thiểu 30 ký tự (hiện tại: ${nChars} ký tự).`;
+      } else if (nWords > 780) {
+        limitHint.className = 'limit-hint limit-warn';
+        limitHint.textContent = `Lưu ý: Bài báo có ${nWords.toLocaleString('vi-VN')} từ — có thể vượt ngưỡng 1.024 token đầu vào của mô hình (≈ 700–800 từ), phần vượt quá sẽ tự động cắt bớt.`;
+      } else {
+        limitHint.className = 'limit-hint';
+        limitHint.textContent = 'Ràng buộc văn bản nguồn: Tối thiểu 30 ký tự, tối đa 60.000 ký tự · Ngưỡng nhận diện tối đa của 2 mô hình: 1.024 token đầu vào (≈ 700–800 từ) và tối đa 256 token đầu ra.';
+      }
+    };
     updateCount();
     title.addEventListener('input', () => { f.title = title.value; });
     article.addEventListener('input', () => { f.article = article.value; updateCount(); });
@@ -213,7 +260,7 @@
     view.replaceChildren(
       el('h1', { text: 'So sánh hai bản tóm tắt' }),
       el('div', { class: 'field' }, el('label', { for: 'title', text: 'Tiêu đề' }), title),
-      el('div', { class: 'field' }, el('label', { for: 'article' }, 'Bài báo  ', count), article),
+      el('div', { class: 'field' }, el('label', { for: 'article' }, 'Bài báo ', count), article, limitHint),
       el('details', { open: f.reference ? true : false },
         el('summary', { text: 'Thêm bản tóm tắt tham chiếu để chấm ROUGE' }), reference),
       el('div', { class: 'actions' },

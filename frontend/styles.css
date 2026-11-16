@@ -48,6 +48,15 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .linklike:hover { text-decoration-color: var(--ink); }
 .msg { color: var(--err); min-height: 1.5em; margin: 12px 0 0; }
 .error { color: var(--err); } .warn { background: var(--warn-soft); color: var(--warn); padding: 6px 10px; border-radius: 4px; }
+.limit-hint { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
+.limit-warn { color: var(--warn); background: var(--warn-soft); padding: 6px 10px; border-radius: 4px; }
+.size-compare { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 14px;
+  padding: 8px 12px; background: var(--paper); border: 1px solid var(--rule); border-radius: 4px; font-size: 13.5px; }
+.size-box { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
+.size-label { color: var(--muted); font-size: 12.5px; margin-right: 2px; }
+.size-label::after { content: ":"; }
+.size-box small { color: var(--muted); font-size: 12.5px; }
+.size-arrow { color: var(--muted); font-weight: 600; }
 
 #results { margin-top: 24px; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
