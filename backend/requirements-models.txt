@@ -4,6 +4,7 @@ torch
 transformers>=4.53,<5
 sentencepiece>=0.2,<0.3
 safetensors>=0.4
+huggingface_hub>=0.23
 numpy>=1.26
 tqdm>=4.66
 # Tách từ cho ViT5 khi người dùng dán văn bản thường (tùy chọn, chọn một):

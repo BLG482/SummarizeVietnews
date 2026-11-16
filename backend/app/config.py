@@ -31,12 +31,12 @@ class Settings:
     preload = _flag("PRELOAD_MODELS", "1")
     device = os.getenv("DEVICE", "auto")
 
-    # Seq2Seq: thư mục run chứa best.pt và tokenizer.model
-    seq2seq_run_dir = os.getenv("SEQ2SEQ_RUN_DIR", "")
+    # Seq2Seq: thư mục run chứa best.pt và tokenizer.model (mặc định tải từ Hugging Face Hub)
+    seq2seq_run_dir = os.getenv("SEQ2SEQ_RUN_DIR", "baoluu22/seq2seq-vietnews-226m")
     seq2seq_beam = int(os.getenv("SEQ2SEQ_BEAM", "4"))
 
-    # ViT5: thư mục checkpoint (vd. best_model-9375) chứa config, tokenizer, trọng số
-    vit5_dir = os.getenv("VIT5_CHECKPOINT_DIR", "")
+    # ViT5: thư mục checkpoint chứa config, tokenizer, trọng số (mặc định tải từ Hugging Face Hub)
+    vit5_dir = os.getenv("VIT5_CHECKPOINT_DIR", "baoluu22/vit5-vietnews-9375")
     vit5_input_template = os.getenv(
         "VIT5_INPUT_TEMPLATE", "Tiêu đề: {title}\\nNội dung: {article}"
     ).replace("\\n", "\n")
