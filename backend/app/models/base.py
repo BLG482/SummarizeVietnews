@@ -46,18 +46,23 @@ def _clean_surface(text: str) -> str:
 
 
 def split_vietnamese_sentences(text: str) -> list[str]:
-    """Tách câu tiếng Việt an toàn, không cắt nhầm sau từ viết tắt (PGS., TS., TP., v.v.)."""
+    """Tách câu tiếng Việt an toàn, không cắt nhầm sau từ viết tắt (PGS., TS., TP., v.v.) và bỏ chú thích ảnh."""
     raw = unicodedata.normalize("NFC", str(text)).strip()
     if not raw:
         return []
 
-    # Bảo vệ dấu chấm sau từ viết tắt và chữ cái viết tắt tên
+    # Loại bỏ dòng chú thích ảnh báo chí (vd: '- Ảnh: THÁI THỊNH', '(Ảnh: ...)')
+    raw = re.sub(r"\s*[\-–—]\s*Ảnh\s*:\s*[^\n.!?]+", "", raw, flags=re.IGNORECASE)
+    raw = re.sub(r"\(\s*Ảnh\s*:\s*[^)]+\)", "", raw, flags=re.IGNORECASE)
+
+    # Bảo vệ dấu chấm sau từ viết tắt, chữ cái viết tắt tên và số hiệu (vd: III.3)
     protected = _ABBR_DOT_RE.sub(rf"\1{_DOT_PLACEHOLDER} ", raw)
     protected = _INITIAL_DOT_RE.sub(rf"\1{_DOT_PLACEHOLDER} ", protected)
+    protected = re.sub(r"([IVXLCDM0-9]+)\.(\d+)", rf"\1{_DOT_PLACEHOLDER}\2", protected)
 
     # Tách theo dòng mới hoặc dấu kết câu (. ! ? …) khi theo sau là khoảng trắng + chữ hoa/dấu mở ngoặc/nháy
     parts = re.split(
-        r"\n+|(?<=[.!?…])\s+(?=[A-ZĐÀ-Ỹ0-9“\"'(\[\-])",
+        r"\n+|(?<=[.!?…])\s+(?=[A-ZĐÀ-Ỹ“\"'(\[\-])",
         protected,
     )
 
