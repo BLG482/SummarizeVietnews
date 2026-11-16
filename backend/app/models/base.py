@@ -1,4 +1,4 @@
-"""Giao diện chung cho mọi mô hình tóm tắt + Pipeline Semantic Chunking & Chống bịa (Anti-Hallucination)."""
+"""Giao diện chung cho mọi mô hình tóm tắt + Pipeline Semantic Chunking, Lọc câu trọng tâm & Chống bịa."""
 from collections import Counter
 from dataclasses import dataclass
 import math
@@ -42,7 +42,22 @@ def _clean_surface(text: str) -> str:
     text = unicodedata.normalize("NFC", str(text)).replace("_", " ").strip()
     text = re.sub(r"\s+([,.;:!?%\)\]\}])", r"\1", text)
     text = re.sub(r"([\(\[\{])\s+", r"\1", text)
+    # Chuẩn hóa dấu gạch nối bị tách rời trong mã vũ khí/từ ghép/ngày tháng: 'F - 16' -> 'F-16', 'AIM - 9' -> 'AIM-9', 'GD - ĐT' -> 'GD-ĐT'
+    text = re.sub(
+        r"(?<=[A-Za-zÀ-ỹ0-9])\s*-\s*(?=[A-Za-zÀ-ỹ0-9])",
+        "-",
+        text,
+    )
     return " ".join(text.split())
+
+
+def _ensure_period(sent: str) -> str:
+    s = sent.strip()
+    if not s:
+        return ""
+    if s[-1] not in ".!?…":
+        s += "."
+    return s
 
 
 def split_vietnamese_sentences(text: str) -> list[str]:
@@ -55,16 +70,20 @@ def split_vietnamese_sentences(text: str) -> list[str]:
     raw = re.sub(r"\s*[\-–—]\s*Ảnh\s*:\s*[^\n.!?]+", "", raw, flags=re.IGNORECASE)
     raw = re.sub(r"\(\s*Ảnh\s*:\s*[^)]+\)", "", raw, flags=re.IGNORECASE)
 
-    # Bảo vệ dấu chấm sau từ viết tắt, chữ cái viết tắt tên và số hiệu (vd: III.3)
+    # Bảo vệ dấu chấm sau từ viết tắt, chữ cái viết tắt tên và số hiệu (vd: III.3, 2.5)
     protected = _ABBR_DOT_RE.sub(rf"\1{_DOT_PLACEHOLDER} ", raw)
     protected = _INITIAL_DOT_RE.sub(rf"\1{_DOT_PLACEHOLDER} ", protected)
     protected = re.sub(r"([IVXLCDM0-9]+)\.(\d+)", rf"\1{_DOT_PLACEHOLDER}\2", protected)
 
-    # Tách theo dòng mới hoặc dấu kết câu (. ! ? …) khi theo sau là khoảng trắng + chữ hoa/dấu mở ngoặc/nháy
-    parts = re.split(
-        r"\n+|(?<=[.!?…])\s+(?=[A-ZĐÀ-Ỹ“\"'(\[\-])",
-        protected,
-    )
+    # Tách theo dòng mới trước để đảm bảo các đoạn văn không có dấu chấm cuối câu không bị dính vào câu sau
+    paragraphs = [p.strip() for p in re.split(r"\n+", protected) if p.strip()]
+    parts: list[str] = []
+    for para in paragraphs:
+        sub_sents = re.split(r"(?<=[.!?…])\s+(?=[A-ZĐÀ-Ỹ“\"'(\[\-])", para)
+        for s in sub_sents:
+            s_clean = s.strip()
+            if s_clean:
+                parts.append(_ensure_period(s_clean))
 
     sentences: list[str] = []
     for part in parts:
@@ -76,17 +95,23 @@ def split_vietnamese_sentences(text: str) -> list[str]:
             len(restored.split()) < 6
             or re.search(rf"\b({_ABBREVIATIONS})\.$", sentences[-1])
         ):
-            sentences[-1] = f"{sentences[-1]} {restored}"
+            sentences[-1] = f"{sentences[-1].rstrip('.')} {restored}"
         else:
-            sentences.append(restored)
+            sentences.append(_ensure_period(restored))
 
-    return sentences if sentences else [raw]
+    return sentences if sentences else [_ensure_period(raw)]
 
 
-def _extract_content_terms(text: str) -> list[str]:
-    """Rút trích từ và cặp từ (bigram) mang nghĩa để tính vector ngữ nghĩa cho Semantic Chunking."""
+def _extract_content_terms(text: str, include_bigrams: bool = True) -> list[str]:
+    """Rút trích từ mang nghĩa để tính vector ngữ nghĩa cho Semantic Chunking & Salience Ranking."""
     clean = _clean_surface(text).lower()
-    words = [w for w in re.findall(r"[^\W\d_]+|\d+", clean, flags=re.UNICODE) if w not in _VN_STOPWORDS and len(w) > 1]
+    words = [
+        w
+        for w in re.findall(r"[^\W\d_]+|\d+", clean, flags=re.UNICODE)
+        if w not in _VN_STOPWORDS and len(w) > 1
+    ]
+    if not include_bigrams:
+        return words
     bigrams = [f"{words[i]}_{words[i+1]}" for i in range(len(words) - 1)]
     return words + bigrams
 
@@ -106,7 +131,6 @@ def _cosine_similarity(vec_a: dict[str, float], vec_b: dict[str, float]) -> floa
 def resolve_short_names(title: str, article: str) -> dict[str, str]:
     """Tìm họ tên đầy đủ (vd: 'ông Đỗ Xuân Diện') ở đầu bài để thay thế cho tên gọi tắt ('ông Diện') ở các đoạn sau."""
     sample_text = _clean_surface(f"{title}. {article[:1500]}")
-    # Bắt mẫu: (ông|bà|anh|chị|thầy|cô|TS|PGS) + Họ Tên (2-4 từ viết hoa)
     pattern = re.compile(
         r"\b(ông|bà|anh|chị|thầy|cô|bác_sĩ|tiến_sĩ|thượng_nghị_sĩ|tổng_thống|cựu_tổng_thống)\s+"
         r"([A-ZĐÀ-Ỹ][a-zđà-ỹ]+(?:\s+[A-ZĐÀ-Ỹ][a-zđà-ỹ]+){1,3})\b"
@@ -133,7 +157,11 @@ def apply_name_resolution(chunk_text: str, name_map: dict[str, str]) -> str:
         if full_name_only in cleaned.replace("_", " "):
             continue
         prefix, last_name = short_key.split(" ", 1)
-        replacement = full_phrase.replace(" ", "_") if has_underscore and " " in full_name_only else full_phrase
+        replacement = (
+            full_phrase.replace(" ", "_")
+            if has_underscore and " " in full_name_only
+            else full_phrase
+        )
         cleaned = re.sub(
             rf"\b({prefix})\s+{re.escape(last_name)}\b",
             replacement,
@@ -144,22 +172,71 @@ def apply_name_resolution(chunk_text: str, name_map: dict[str, str]) -> str:
     return cleaned
 
 
+def _select_top_salient_sentences_in_chunk(
+    chunk_sents: list[str],
+    title: str,
+    full_article_vec: dict[str, float],
+    max_sents: int = 2,
+) -> str:
+    """Trong mỗi Semantic Chunk, chọn ra 1-2 câu trọng tâm nhất (Salience Filtering) trước khi đưa vào model.
+    Việc này giúp:
+      1. Model không ghép nhầm 2 vế của 2 câu xa nhau ('mạnh trên giấy tờ' + 'đối phó UAV').
+      2. Ở đoạn cuối, không bị câu phụ đầu đoạn (như 'kiểm tra sau 300 giờ bay') che khuất ý lớn ('cạn tên lửa AIM-9, máy bay thay thế hạn chế')."""
+    if len(chunk_sents) <= max_sents:
+        return " ".join(chunk_sents)
+
+    title_vec = Counter(_extract_content_terms(title, include_bigrams=False))
+    chunk_vec = Counter(_extract_content_terms(" ".join(chunk_sents), include_bigrams=False))
+
+    scored: list[tuple[float, int, str]] = []
+    for idx, s in enumerate(chunk_sents):
+        s_clean = _clean_surface(s)
+        w_count = len(s_clean.split())
+        if w_count < 7:
+            continue
+        s_vec = Counter(_extract_content_terms(s_clean, include_bigrams=False))
+        sim_chunk = _cosine_similarity(s_vec, chunk_vec)
+        sim_title = _cosine_similarity(s_vec, title_vec)
+        sim_doc = _cosine_similarity(s_vec, full_article_vec)
+
+        # Phạt các câu chỉ mang tính giải thích định nghĩa chung ('thường phải trải qua quy trình...')
+        is_background_def = 0.72 if re.search(r"\bthường phải trải qua\b|\btheo quy định\b", s_clean.lower()) else 1.0
+        # Ưu tiên câu nêu vấn đề cốt lõi, nguyên nhân, hệ quả hoặc số liệu tổng hợp
+        has_key_signal = 1.18 if re.search(
+            r"\b(tuy nhiên|ngoài|đối mặt|thiếu|hạn chế|đình trệ|cảnh báo|nguyên nhân|khiến|do đó|cho biết)\b",
+            s_clean.lower(),
+        ) else 1.0
+        len_factor = 1.0 if 14 <= w_count <= 45 else 0.82
+
+        score = (0.50 * sim_chunk + 0.30 * sim_doc + 0.20 * sim_title) * is_background_def * has_key_signal * len_factor
+        scored.append((score, idx, s))
+
+    if not scored:
+        return " ".join(chunk_sents[:max_sents])
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    # Lấy câu điểm cao nhất; nếu câu đó ngắn (< 28 từ) và có câu thứ 2 liên quan chặt thì lấy tối đa 2 câu theo đúng thứ tự xuất hiện
+    top_selected = [scored[0]]
+    if len(scored) > 1 and len(_clean_surface(scored[0][2]).split()) < 26:
+        top_selected.append(scored[1])
+    top_selected.sort(key=lambda x: x[1])
+    return " ".join(x[2] for x in top_selected)
+
+
 def semantic_chunk_article(title: str, article: str, target_points: int = 3) -> list[str]:
-    """Bước 1: Semantic Chunking — Tách bài báo thành các đoạn theo điểm chuyển ý (Semantic Breakpoints).
-    Sử dụng cửa sổ trượt TF-IDF + Cosine Similarity giữa các câu liên tiếp để tìm chỗ chuyển ý."""
+    """Bước 1: Semantic Chunking + Intra-Chunk Salience Selection.
+    Chia bài báo theo điểm chuyển ý (Semantic Breakpoints) rồi lọc câu trọng tâm của mỗi đoạn."""
     sentences = split_vietnamese_sentences(article)
     n = len(sentences)
     if n <= target_points:
         return sentences
 
-    # Tính IDF trên toàn bộ các câu trong bài
     sent_terms = [_extract_content_terms(s) for s in sentences]
     df: Counter[str] = Counter()
     for terms in sent_terms:
         for t in set(terms):
             df[t] += 1
 
-    # Tạo vector ngữ cảnh cửa sổ trượt (câu i kết hợp câu liền kề)
     vectors: list[dict[str, float]] = []
     for i in range(n):
         window = sent_terms[max(0, i - 1) : min(n, i + 2)]
@@ -168,13 +245,11 @@ def semantic_chunk_article(title: str, article: str, target_points: int = 3) -> 
         vec = {t: count * (math.log((n + 1) / (df[t] + 1)) + 1.0) for t, count in tf.items()}
         vectors.append(vec)
 
-    # Tính độ tương đồng Cosine tại từng ranh giới câu (i, i+1)
-    # Điểm chuyển ý (breakpoint) là nơi độ tương đồng thấp VÀ cân đối độ dài đoạn
     word_counts = [len(s.split()) for s in sentences]
     total_words = max(1, sum(word_counts))
     ideal_chunk_words = total_words / target_points
-
     name_map = resolve_short_names(title, article)
+    full_doc_vec = Counter(_extract_content_terms(f"{title} {article}", include_bigrams=False))
 
     chunks: list[str] = []
     start_idx = 0
@@ -190,22 +265,25 @@ def semantic_chunk_article(title: str, article: str, target_points: int = 3) -> 
             acc_words = 0
             for split_pos in range(start_idx + 1, max_end + 1):
                 acc_words += word_counts[split_pos - 1]
-                # Độ tương đồng giữa câu trước ranh giới và câu sau ranh giới (càng thấp càng là chỗ chuyển ý)
                 sim = _cosine_similarity(vectors[split_pos - 1], vectors[split_pos])
-                # Phạt nhẹ nếu độ dài đoạn lệch quá xa mức cân bằng
                 length_penalty = abs(acc_words - ideal_chunk_words) / max(ideal_chunk_words, 20.0) * 0.35
-                # Thưởng nếu câu tiếp theo bắt đầu đoạn văn mới trong bài gốc
                 score = sim + length_penalty
                 if acc_words >= 18 and score < best_score:
                     best_score = score
                     best_split = split_pos
 
-        chunk_str = " ".join(sentences[start_idx:best_split])
-        chunks.append(apply_name_resolution(chunk_str, name_map))
+        chunk_sents = sentences[start_idx:best_split]
+        focused_chunk = _select_top_salient_sentences_in_chunk(
+            chunk_sents, title, full_doc_vec, max_sents=2
+        )
+        chunks.append(apply_name_resolution(focused_chunk, name_map))
         start_idx = best_split
 
-    last_chunk = " ".join(sentences[start_idx:])
-    chunks.append(apply_name_resolution(last_chunk, name_map))
+    last_sents = sentences[start_idx:]
+    focused_last = _select_top_salient_sentences_in_chunk(
+        last_sents, title, full_doc_vec, max_sents=2
+    )
+    chunks.append(apply_name_resolution(focused_last, name_map))
     return [c for c in chunks if c.strip()]
 
 
@@ -221,8 +299,9 @@ def normalize_one_sentence(text: str) -> str:
         return ""
     sents = split_vietnamese_sentences(cleaned)
     first = sents[0].strip() if sents else cleaned
-    # Bỏ dấu gạch đầu dòng hoặc dấu ngoặc kép mở đầu bị lẻ
     first = re.sub(r"^[\-–—•*+\s]+", "", first).strip()
+    # Bỏ từ nối đứng lửng ở đầu câu nếu đứng một mình
+    first = re.sub(r"^(Tuy nhiên|Do đó|Vì vậy|Ngoài ra|Theo đó),\s*", "", first, flags=re.IGNORECASE).strip()
     if first.count("“") > first.count("”"):
         first = first.replace("“", "").strip()
     if first.count('"') % 2 == 1:
@@ -236,17 +315,16 @@ def normalize_one_sentence(text: str) -> str:
 
 
 def is_grounded_in_source(candidate: str, full_source: str, section_text: str) -> bool:
-    """Bước 3: Kiểm tra chống bịa (Anti-Hallucination Guard).
+    """Bước 3: Kiểm tra chống bịa & chống cắt ghép câu cơ học (Anti-Hallucination & Clause-Stitching Guard).
     Loại bỏ câu tóm tắt nếu:
       1. Chứa con số không có trong bài gốc.
-      2. Chứa tên riêng viết hoa (như 'Nguyễn Văn Dương', 'Lê Thị Thanh Mai') không có trong bài gốc.
-      3. Có quá nhiều âm tiết lạ không nằm trong bài gốc (như 'tỉnh uệ') hoặc câu quá ngắn/cụt."""
+      2. Chứa bất kỳ âm tiết/từ nào bị mất chữ ('tích lũ') hoặc không tồn tại trong bài gốc.
+      3. Ghép nhầm 2 vế câu không liên quan ('Zelensky lên châu Âu để sửa chữa bảo dưỡng', 'mạnh trên giấy tờ để đối phó UAV')."""
     cand = _clean_surface(candidate)
     words = cand.split()
-    if len(words) < 7 or len(words) > 65:
+    if len(words) < 8 or len(words) > 58:
         return False
 
-    # Không chấp nhận câu kết thúc cụt bằng từ viết tắt (vd: 'của PGS.', 'ĐH Quốc gia TP.')
     if re.search(rf"\b({_ABBREVIATIONS})\.$", cand):
         return False
 
@@ -255,48 +333,71 @@ def is_grounded_in_source(candidate: str, full_source: str, section_text: str) -
     src_tokens = set(re.findall(r"[^\W_]+", src_lower, flags=re.UNICODE))
     src_numbers = set(re.findall(r"\d+", src_clean))
 
-    # 1. Kiểm tra mọi con số trong câu tóm tắt phải có trong bài gốc
+    # 1. Mọi con số phải có trong bài gốc
     cand_numbers = set(re.findall(r"\d+", cand))
     if not cand_numbers.issubset(src_numbers):
         return False
 
-    # 2. Kiểm tra mọi từ viết hoa (tên người, địa danh, tổ chức) từ vị trí thứ 2 trong câu phải có trong bài gốc
+    # 2. Kiểm tra từ vựng: KHÔNG cho phép từ bị cụt âm tiết (như 'lũ' thay vì 'lũy') hoặc tên riêng bịa
     cand_tokens_raw = re.findall(r"[^\W_]+", cand, flags=re.UNICODE)
-    for idx, tok in enumerate(cand_tokens_raw):
-        if idx > 0 and tok[0].isupper() and not tok.isdigit():
-            if tok.lower() not in src_tokens:
-                return False
-
-    # 3. Kiểm tra tỷ lệ âm tiết có trong bài gốc (chặn từ rác bịa như 'uệ', 'gã khùng' hoặc lệch ngữ cảnh)
-    cand_lower_tokens = [t.lower() for t in cand_tokens_raw if not t.isdigit()]
-    if not cand_lower_tokens:
-        return False
-    in_source_count = sum(1 for t in cand_lower_tokens if t in src_tokens)
-    if in_source_count / len(cand_lower_tokens) < 0.85:
+    allowed_connectors = {"cho", "biết", "theo", "tại", "vừa", "đã", "đang", "sẽ", "việc", "nhằm", "trong", "với"}
+    unknown_tokens = [
+        t for t in cand_tokens_raw
+        if not t.isdigit() and t.lower() not in src_tokens and t.lower() not in allowed_connectors
+    ]
+    if unknown_tokens:
         return False
 
-    # 4. Câu tóm tắt của đoạn nào phải chứa ít nhất 35% từ vựng thực của chính đoạn đó
+    # 3. Kiểm tra tính liên tục cụm từ (Bigram Continuity) để chặn lỗi 'Râu ông nọ cắm cằm bà kia'
+    # Nếu model tự ý nối 2 vế xa nhau (như 'Zelensky lên châu Âu', 'trên giấy tờ để đối phó'), tỷ lệ bigram có thật trong bài gốc sẽ tụt xuống thấp.
+    src_words_seq = [t.lower() for t in re.findall(r"[^\W_]+", src_lower, flags=re.UNICODE)]
+    src_bigrams = {f"{src_words_seq[i]} {src_words_seq[i+1]}" for i in range(len(src_words_seq) - 1)}
+    cand_words_seq = [t.lower() for t in cand_tokens_raw]
+    if len(cand_words_seq) >= 6:
+        cand_bigrams = [f"{cand_words_seq[i]} {cand_words_seq[i+1]}" for i in range(len(cand_words_seq) - 1)]
+        matched_bigrams = sum(1 for bg in cand_bigrams if bg in src_bigrams)
+        if matched_bigrams / len(cand_bigrams) < 0.72:
+            return False
+
+    # 4. Câu tóm tắt của đoạn nào phải chứa ít nhất 45% từ khóa thực của chính đoạn đó
     sec_tokens = set(re.findall(r"[^\W_]+", _clean_surface(section_text).lower(), flags=re.UNICODE)) - _VN_STOPWORDS
-    cand_content = [t for t in cand_lower_tokens if t not in _VN_STOPWORDS]
+    cand_content = [t.lower() for t in cand_tokens_raw if not t.isdigit() and t.lower() not in _VN_STOPWORDS]
     if cand_content and sec_tokens:
         sec_overlap = sum(1 for t in cand_content if t in sec_tokens) / len(cand_content)
-        if sec_overlap < 0.35:
+        if sec_overlap < 0.45:
             return False
 
     return True
 
 
+def _is_redundant(cand_text: str, existing_points: list[str]) -> bool:
+    """Kiểm tra trùng lặp ý giữa câu mới và các ý đã chọn (dùng cả Unigram Jaccard và Cosine)."""
+    cand_terms = set(_extract_content_terms(cand_text, include_bigrams=False))
+    cand_vec = Counter(_extract_content_terms(cand_text, include_bigrams=True))
+    if not cand_terms:
+        return True
+    for prev in existing_points:
+        prev_terms = set(_extract_content_terms(prev, include_bigrams=False))
+        prev_vec = Counter(_extract_content_terms(prev, include_bigrams=True))
+        if prev_terms:
+            overlap = len(cand_terms & prev_terms) / min(len(cand_terms), len(prev_terms))
+            if overlap > 0.42:
+                return True
+        if _cosine_similarity(cand_vec, prev_vec) > 0.42:
+            return True
+    return False
+
+
 def _select_best_extractive_sentence(
     section_text: str, title: str, full_source: str, existing_points: list[str]
 ) -> str:
-    """Khi câu sinh trừu tượng của một đoạn bị phát hiện bịa thông tin, chọn câu trung tâm (salient sentence)
-    trực tiếp từ chính đoạn văn đó để đảm bảo 100% chính xác sự thật."""
+    """Khi câu sinh trừu tượng của một đoạn bị phát hiện cắt ghép lỗi hoặc bịa thông tin,
+    chọn câu trung tâm chuẩn xác nhất từ đoạn đó."""
     sents = split_vietnamese_sentences(_clean_surface(section_text))
     if not sents:
         return ""
 
-    sec_vec = Counter(_extract_content_terms(f"{title} {section_text}"))
-    existing_vecs = [Counter(_extract_content_terms(p)) for p in existing_points]
+    sec_vec = Counter(_extract_content_terms(f"{title} {section_text}", include_bigrams=False))
 
     best_sent = ""
     best_score = -1.0
@@ -305,13 +406,11 @@ def _select_best_extractive_sentence(
         w_count = len(norm_s.split())
         if w_count < 7:
             continue
-        s_vec = Counter(_extract_content_terms(norm_s))
-        # Kiểm tra không trùng ý với các câu đã chọn trước đó
-        if any(_cosine_similarity(s_vec, ev) > 0.55 for ev in existing_vecs):
+        if _is_redundant(norm_s, existing_points):
             continue
+        s_vec = Counter(_extract_content_terms(norm_s, include_bigrams=False))
         centrality = _cosine_similarity(s_vec, sec_vec)
-        # Ưu tiên câu có độ dài chuẩn báo chí (15 - 40 từ) và không phải câu thoại rời rạc
-        len_bonus = 1.0 if 12 <= w_count <= 42 else 0.75
+        len_bonus = 1.0 if 12 <= w_count <= 45 else 0.78
         quote_penalty = 0.85 if s.strip().startswith(("“", '"', "-")) else 1.0
         score = centrality * len_bonus * quote_penalty
         if score > best_score:
@@ -319,6 +418,10 @@ def _select_best_extractive_sentence(
             best_sent = norm_s
 
     if not best_sent:
+        for s in sents:
+            norm_s = normalize_one_sentence(s)
+            if not _is_redundant(norm_s, existing_points):
+                return norm_s
         best_sent = normalize_one_sentence(sents[0])
     return best_sent
 
@@ -329,36 +432,35 @@ def finalize_three_points(
     title: str = "",
     full_article: str = "",
 ) -> str:
-    """Bước 3 & 4: Kiểm tra chống bịa + Khử trùng lặp ngữ nghĩa (Semantic Deduplication) + Ghép thành 2-3 ý."""
-    full_source = f"{title} {full_article or ' '.join(sections)}"
+    """Bước 3 & 4: Kiểm tra chống bịa/cắt ghép + Khử trùng lặp ngữ nghĩa + Hợp nhất 2-3 ý."""
+    full_source = f"{title}. {full_article or ' '.join(sections)}"
+    all_article_sents = split_vietnamese_sentences(_clean_surface(full_article)) if full_article else []
     points: list[str] = []
-    point_vecs: list[dict[str, float]] = []
 
     for out, sec in zip(raw_outputs, sections):
-        # Thử từng câu ứng viên mà model sinh ra cho đoạn này
         candidates = [normalize_one_sentence(s) for s in split_vietnamese_sentences(out) if s.strip()]
         chosen = ""
         for cand in candidates:
             if not is_grounded_in_source(cand, full_source, sec):
                 continue
-            cand_vec = Counter(_extract_content_terms(cand))
-            # Kiểm tra trùng lặp ý với các ý đã chọn trước đó (Cosine > 0.50 là trùng ý)
-            if any(_cosine_similarity(cand_vec, pv) > 0.50 for pv in point_vecs):
+            if _is_redundant(cand, points):
                 continue
             chosen = cand
             break
 
-        # Nếu model bịa tên/số hoặc lặp ý ở đoạn này -> lấy câu trọng tâm nhất của đoạn đó
         if not chosen:
             chosen = _select_best_extractive_sentence(sec, title, full_source, points)
 
-        if chosen:
-            c_vec = Counter(_extract_content_terms(chosen))
-            if not any(_cosine_similarity(c_vec, pv) > 0.55 for pv in point_vecs):
-                points.append(chosen)
-                point_vecs.append(c_vec)
+        if chosen and not _is_redundant(chosen, points):
+            points.append(chosen)
 
-    return "\n".join(points)
+    # Nếu sau khi lọc trùng mà còn dưới 3 ý và bài báo đủ dài, bổ sung câu trọng tâm chưa xuất hiện từ toàn bài
+    if len(points) < 3 and len(all_article_sents) >= 3:
+        extra = _select_best_extractive_sentence(full_article, title, full_source, points)
+        if extra and not _is_redundant(extra, points):
+            points.append(extra)
+
+    return "\n".join(points[:3])
 
 
 class Summarizer:

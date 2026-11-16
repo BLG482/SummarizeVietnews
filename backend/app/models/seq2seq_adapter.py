@@ -52,8 +52,9 @@ class Seq2SeqSummarizer(Summarizer):
 
         raw_outputs: list[str] = []
         with torch.no_grad():
-            for sec in sections:
-                src = f"Tiêu đề: {title.strip()} Nội dung: {sec.strip()}"
+            for idx, sec in enumerate(sections):
+                sec_title = title.strip() if idx == 0 else ""
+                src = f"Tiêu đề: {sec_title} Nội dung: {sec.strip()}"
                 out = self._s2s.generate(
                     self.model, self.tokenizer, src, beam_size=beam, max_new=76
                 )

@@ -141,8 +141,9 @@ class ViT5Summarizer(Summarizer):
         print(f"[ViT5] Đang sinh tóm tắt {len(sections)} ý bằng Semantic Chunking (beam={beam})...", flush=True)
 
         inputs: list[str] = []
-        for sec in sections:
-            sec_text = settings.vit5_input_template.format(title=title.strip(), article=sec.strip())
+        for idx, sec in enumerate(sections):
+            sec_title = title.strip() if idx == 0 else ""
+            sec_text = settings.vit5_input_template.format(title=sec_title, article=sec.strip())
             if not raw:
                 sec_text = word_segment(sec_text)
             inputs.append(sec_text)
