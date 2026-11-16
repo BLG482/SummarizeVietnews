@@ -348,11 +348,20 @@ def is_grounded_in_source(candidate: str, full_source: str, section_text: str) -
     if unknown_tokens:
         return False
 
-    # 3. Kiểm tra tính liên tục cụm từ (Bigram Continuity) để chặn lỗi 'Râu ông nọ cắm cằm bà kia'
+    # 3. Chặn lặp cụm từ ngay trong cùng 1 câu (vd: 'đang bị đình trệ ... bị đình trệ')
+    cand_words_seq = [t.lower() for t in cand_tokens_raw]
+    content_bigrams = [
+        f"{cand_words_seq[i]} {cand_words_seq[i+1]}"
+        for i in range(len(cand_words_seq) - 1)
+        if cand_words_seq[i] not in _VN_STOPWORDS and cand_words_seq[i + 1] not in _VN_STOPWORDS
+    ]
+    if len(content_bigrams) != len(set(content_bigrams)):
+        return False
+
+    # 4. Kiểm tra tính liên tục cụm từ (Bigram Continuity) để chặn lỗi 'Râu ông nọ cắm cằm bà kia'
     # Nếu model tự ý nối 2 vế xa nhau (như 'Zelensky lên châu Âu', 'trên giấy tờ để đối phó'), tỷ lệ bigram có thật trong bài gốc sẽ tụt xuống thấp.
     src_words_seq = [t.lower() for t in re.findall(r"[^\W_]+", src_lower, flags=re.UNICODE)]
     src_bigrams = {f"{src_words_seq[i]} {src_words_seq[i+1]}" for i in range(len(src_words_seq) - 1)}
-    cand_words_seq = [t.lower() for t in cand_tokens_raw]
     if len(cand_words_seq) >= 6:
         cand_bigrams = [f"{cand_words_seq[i]} {cand_words_seq[i+1]}" for i in range(len(cand_words_seq) - 1)]
         matched_bigrams = sum(1 for bg in cand_bigrams if bg in src_bigrams)
