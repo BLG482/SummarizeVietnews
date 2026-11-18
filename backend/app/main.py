@@ -1,6 +1,8 @@
 """Backend FastAPI: tóm tắt bằng hai mô hình, lưu kết quả, bình chọn và thống kê."""
+from collections import defaultdict, deque
 import os
 import threading
+import time
 import urllib.error
 import urllib.request
 from contextlib import asynccontextmanager
@@ -8,7 +10,7 @@ from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, selectinload
@@ -21,6 +23,57 @@ from .schemas import SummarizeRequest, VoteRequest
 from .scoring import rouge, unsupported_numbers
 
 MODAL_BACKEND = "https://blg482--vietnews-summarizer-web.us-east.modal.run"
+
+ALLOWED_ORIGINS = [
+    "https://tomtatvanban.id.vn",
+    "https://www.tomtatvanban.id.vn",
+    "https://summarize-vietnews.vercel.app",
+    "https://blg482--vietnews-summarizer-web.us-east.modal.run",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+
+MAX_BODY_BYTES = 256 * 1024  # Giới hạn tối đa 256 KB mỗi request để chống tràn RAM
+_RATE_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
+_RATE_LOCK = threading.Lock()
+
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data:; "
+        "connect-src 'self' https://blg482--vietnews-summarizer-web.us-east.modal.run; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "frame-ancestors 'none'"
+    ),
+}
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _check_rate_limit(key: str, max_requests: int, window_seconds: float = 60.0) -> bool:
+    now = time.monotonic()
+    with _RATE_LOCK:
+        bucket = _RATE_BUCKETS[key]
+        while bucket and now - bucket[0] > window_seconds:
+            bucket.popleft()
+        if len(bucket) >= max_requests:
+            return False
+        bucket.append(now)
+        return True
 
 
 def _safe_load(model) -> None:
@@ -44,44 +97,102 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Đối chiếu tóm tắt: Seq2Seq và ViT5", lifespan=lifespan)
+app = FastAPI(
+    title="Đối chiếu tóm tắt: Seq2Seq và ViT5",
+    lifespan=lifespan,
+    docs_url=None if os.environ.get("VERCEL") else "/docs",
+    redoc_url=None,
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type"],
 )
 if not os.environ.get("VERCEL"):
     Base.metadata.create_all(engine)
 
 
 @app.middleware("http")
-async def _vercel_proxy_api(request: Request, call_next):
-    if os.environ.get("VERCEL") and request.url.path.startswith("/api/"):
-        target = MODAL_BACKEND + request.url.path
+async def _security_and_proxy_middleware(request: Request, call_next):
+    # 1. Chặn gói tin quá lớn (> 256 KB) chống tấn công DoS
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > MAX_BODY_BYTES:
+        resp = JSONResponse(
+            {"detail": "Dữ liệu gửi lên vượt quá giới hạn cho phép (tối đa 256 KB)."},
+            status_code=413,
+        )
+        resp.headers.update(SECURITY_HEADERS)
+        return resp
+
+    # 2. Giới hạn tần suất theo IP (Rate Limiting chống spam đốt credit)
+    path = request.url.path
+    ip = _client_ip(request)
+    if request.method == "POST" and path == "/api/summarize":
+        if not _check_rate_limit(f"sum:{ip}", max_requests=6, window_seconds=60.0):
+            resp = JSONResponse(
+                {"detail": "Bạn gửi yêu cầu tóm tắt quá nhanh (tối đa 6 lượt/phút). Vui lòng đợi ít giây rồi thử lại."},
+                status_code=429,
+            )
+            resp.headers.update(SECURITY_HEADERS)
+            return resp
+    elif request.method == "POST" and path.startswith("/api/"):
+        if not _check_rate_limit(f"post:{ip}", max_requests=25, window_seconds=60.0):
+            resp = JSONResponse(
+                {"detail": "Thao tác quá nhanh, vui lòng thử lại sau ít giây."},
+                status_code=429,
+            )
+            resp.headers.update(SECURITY_HEADERS)
+            return resp
+    elif path.startswith("/api/"):
+        if not _check_rate_limit(f"get:{ip}", max_requests=120, window_seconds=60.0):
+            resp = JSONResponse(
+                {"detail": "Quá nhiều yêu cầu từ địa chỉ IP của bạn, vui lòng đợi ít giây."},
+                status_code=429,
+            )
+            resp.headers.update(SECURITY_HEADERS)
+            return resp
+
+    # 3. Proxy sang Modal khi chạy trên Vercel
+    if os.environ.get("VERCEL") and path.startswith("/api/"):
+        target = MODAL_BACKEND + path
         if request.url.query:
             target += "?" + request.url.query
         body = await request.body()
+        if len(body) > MAX_BODY_BYTES:
+            resp = JSONResponse({"detail": "Dữ liệu gửi lên quá lớn."}, status_code=413)
+            resp.headers.update(SECURITY_HEADERS)
+            return resp
         req = urllib.request.Request(
             target,
             data=body if body else None,
             method=request.method,
-            headers={"Content-Type": request.headers.get("content-type", "application/json")},
+            headers={
+                "Content-Type": request.headers.get("content-type", "application/json"),
+                "X-Forwarded-For": ip,
+            },
         )
         try:
-            with urllib.request.urlopen(req, timeout=300) as resp:
-                return Response(
-                    content=resp.read(),
-                    status_code=resp.status,
-                    media_type=resp.headers.get("Content-Type", "application/json"),
+            with urllib.request.urlopen(req, timeout=300) as upstream:
+                resp = Response(
+                    content=upstream.read(),
+                    status_code=upstream.status,
+                    media_type=upstream.headers.get("Content-Type", "application/json"),
                 )
+                resp.headers.update(SECURITY_HEADERS)
+                return resp
         except urllib.error.HTTPError as exc:
-            return Response(
+            resp = Response(
                 content=exc.read(),
                 status_code=exc.code,
                 media_type=exc.headers.get("Content-Type", "application/json"),
             )
-    return await call_next(request)
+            resp.headers.update(SECURITY_HEADERS)
+            return resp
+
+    response = await call_next(request)
+    response.headers.update(SECURITY_HEADERS)
+    return response
 
 
 # ---------- chuyển đối tượng DB thành JSON ----------
@@ -128,6 +239,9 @@ def reload_model(key: str):
     model = registry.get(key)
     if model is None:
         raise HTTPException(404, f"Không có mô hình '{key}'.")
+    # Chỉ cho phép nạp lại khi mô hình đang bị lỗi hoặc chưa nạp (chặn người lạ cố tình reset mô hình đang sẵn sàng)
+    if model.state in ("ready", "loading"):
+        return model.info()
     model.reload()
     threading.Thread(target=_safe_load, args=(model,), daemon=True).start()
     return model.info()
