@@ -24,7 +24,12 @@ body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.55 v
 .st-ready .dot { background: #1E8E5A; } .st-loading .dot { background: #D98A00; }
 .st-error { border-color: var(--err); cursor: pointer; } .st-error .dot { background: var(--err); }
 
-main { max-width: 1120px; margin: 0 auto; padding: 28px 20px 72px; }
+main { max-width: 1120px; margin: 0 auto; padding: 28px 20px 32px; }
+.site-footer { max-width: 1120px; margin: 0 auto; padding: 16px 20px 40px; border-top: 1px solid var(--rule);
+  color: var(--muted); font-size: 13.5px; }
+.footer-inner { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.footer-inner strong { color: var(--ink); font-weight: 500; }
+.footer-sep { color: var(--rule); }
 h1 { font-size: 24px; font-weight: 600; letter-spacing: -0.015em; margin: 0 0 20px; }
 .muted { color: var(--muted); font-weight: 400; }
 
