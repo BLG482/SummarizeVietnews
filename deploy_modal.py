@@ -40,8 +40,9 @@ image = (
     )
     .add_local_dir(str(ROOT / "backend"), remote_path="/app/backend")
     .add_local_dir(str(ROOT / "frontend"), remote_path="/app/frontend")
-    .add_local_file(str(ROOT / "data" / "test.csv"), remote_path="/app/data/test.csv")
 )
+if (ROOT / "data" / "test.csv").exists():
+    image = image.add_local_file(str(ROOT / "data" / "test.csv"), remote_path="/app/data/test.csv")
 
 app = modal.App("vietnews-summarizer", image=image)
 volume = modal.Volume.from_name("vietnews-summarizer-data", create_if_missing=True)
@@ -72,7 +73,9 @@ def web():
     os.environ["SEQ2SEQ_RUN_DIR"] = "/models/seq2seq"
     os.environ["VIT5_CHECKPOINT_DIR"] = "/models/vit5"
     os.environ["DATABASE_URL"] = "sqlite:////tmp/app.db"
-    os.environ["TESTSET_CSV"] = "/app/data/test.csv"
+    os.environ["TESTSET_CSV"] = (
+        "/app/data/test.csv" if os.path.exists("/app/data/test.csv") else "/data_vol/test.csv"
+    )
     os.environ["HF_HOME"] = "/tmp/hf_cache"
 
     sys.path.insert(0, "/app/backend")
