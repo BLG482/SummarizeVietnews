@@ -1,0 +1,32 @@
+name: Deploy to Modal
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Modal CLI
+        run: pip install modal
+
+      - name: Deploy Backend to Modal (from US Runner)
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          if [ -n "$MODAL_TOKEN_ID" ] && [ -n "$MODAL_TOKEN_SECRET" ]; then
+            modal deploy deploy_modal.py
+          else
+            echo "Chưa cấu hình MODAL_TOKEN_ID và MODAL_TOKEN_SECRET trong GitHub Secrets."
+          fi
